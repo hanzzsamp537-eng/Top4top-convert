@@ -483,8 +483,10 @@ app.post("/api/generate", async (req, res) => {
     console.log(`✅ Done: ${resultUrl}`);
     res.json({ success: true, url: resultUrl, title });
   } catch (err) {
-    console.error("❌", err.message);
-    res.json({ success: false, error: err.message || "Terjadi kesalahan" });
+    console.error("❌ FULL ERROR:", err.message);
+    console.error("❌ STDERR:", err.stderr);
+    console.error("❌ STDOUT:", err.stdout);
+    res.json({ success: false, error: err.stderr || err.stdout || err.message });
   } finally {
     if (tmpFile) try { fs.unlinkSync(tmpFile); } catch {}
   }
