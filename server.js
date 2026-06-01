@@ -434,7 +434,7 @@ async function getYtdlpBin() {
 }
 
 async function getYoutubeInfo(url, bin) {
-  const { stdout } = await execAsync(`${bin} --dump-json --no-playlist "${url}" 2>/dev/null`, { timeout: 30000 });
+  const { stdout } = await execAsync(`${bin} --dump-json --no-playlist --no-check-certificate "${url}" 2>/dev/null`, { timeout: 30000 });
   return JSON.parse(stdout.trim());
 }
 
@@ -442,7 +442,7 @@ async function downloadYoutubeAudio(url, bin) {
   const tmpDir = os.tmpdir();
   const videoId = extractVideoId(url);
   const tpl = path.join(tmpDir, `yt_${videoId}_%(title)s.%(ext)s`);
-  const cmd = `${bin} -x --audio-format mp3 --audio-quality 5 -o "${tpl}" "${url}" 2>&1`;
+  const cmd = `${bin} -x --audio-format mp3 --audio-quality 5 --no-check-certificate --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" -o "${tpl}" "${url}" 2>&1`;
   await execAsync(cmd, { timeout: 180000 });
   const files = fs.readdirSync(tmpDir).filter(f => f.startsWith(`yt_${videoId}`) && f.endsWith(".mp3"));
   if (files.length === 0) {
