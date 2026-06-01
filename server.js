@@ -408,10 +408,29 @@ function extractVideoId(url) {
   return null;
 }
 
+async function installYtdlp() {
+  const binPath = "/tmp/yt-dlp";
+  // Kalau sudah ada skip
+  if (fs.existsSync(binPath)) {
+    try { await execAsync(`${binPath} --version`); return binPath; } catch {}
+  }
+  console.log("⬇️  Menginstall yt-dlp...");
+  await execAsync(
+    `curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ${binPath} && chmod +x ${binPath}`,
+    { timeout: 60000 }
+  );
+  console.log("✅ yt-dlp berhasil diinstall");
+  return binPath;
+}
+
 async function getYtdlpBin() {
+  // 1. cek PATH dulu
   try { const { stdout } = await execAsync("which yt-dlp"); if (stdout.trim()) return "yt-dlp"; } catch {}
   try { const { stdout } = await execAsync("which youtube-dl"); if (stdout.trim()) return "youtube-dl"; } catch {}
-  throw new Error("yt-dlp tidak ditemukan. Install dulu: https://github.com/yt-dlp/yt-dlp");
+  // 2. cek /tmp
+  if (fs.existsSync("/tmp/yt-dlp")) return "/tmp/yt-dlp";
+  // 3. auto install ke /tmp
+  return await installYtdlp();
 }
 
 async function getYoutubeInfo(url, bin) {
@@ -475,7 +494,8 @@ app.get("/api/health", (_, res) => res.json({ ok: true }));
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`\n🚀 YT2Top berjalan di http://localhost:${PORT}`);
   console.log(`   Buka di browser: http://localhost:${PORT}\n`);
+  try { await installYtdlp(); } catch (e) { console.warn("⚠️ Auto-install yt-dlp gagal:", e.message); }
 });
