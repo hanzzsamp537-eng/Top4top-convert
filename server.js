@@ -353,19 +353,89 @@ function getCookieSid(jar) {
 
 function parseResultUrl(html) {
   const $ = cheerio.load(html);
-  let direct = null;
+
+  // ── Prioritas 1: Link CDN langsung (e.top4top.io / f.top4top.io / subdomain lain)
+  // Format: http://e.top4top.io/m_XXXXX.mp3
+  const cdnFromInput = $('input[value]').toArray()
+    .map(el => $(el).attr("value")?.trim())
+    .find(v => v && /^https?:\/\/[a-z]\.top4top\.io\//i.test(v));
+  if (cdnFromInput) return cdnFromInput;
+
+  const cdnFromAnchor = $('a[href]').toArray()
+    .map(el => $(el).attr("href")?.trim())
+    .find(h => h && /^https?:\/\/[a-z]\.top4top\.io\//i.test(h));
+  if (cdnFromAnchor) return cdnFromAnchor;
+
+  // ── Prioritas 2: Input/anchor dengan ekstensi audio
+  const audioExt = /\.(mp3|m4a|ogg|webm|aac|flac|wav)(\?.*)?$/i;
+  const audioFromInput = $('input[value]').toArray()
+    .map(el => $(el).attr("value")?.trim())
+    .find(v => v && audioExt.test(v));
+  if (audioFromInput) return audioFromInput;
+
+  const audioFromAnchor = $('a[href]').toArray()
+    .map(el => $(el).attr("href")?.trim())
+    .find(h => h && audioExt.test(h));
+  if (audioFromAnchor) return audioFromAnchor;
+
+  // ── Prioritas 3: Field berlabel "direct" / "رابط مباشر"
+  let labeledDirect = null;
   $(".inputbody").each((_, el) => {
-    const title = $(el).find(".btitle").text().trim();
+    const title = $(el).find(".btitle").text().trim().toLowerCase();
     const value = $(el).find("input").attr("value")?.trim();
-    if ((title.includes("رابط") || title.toLowerCase().includes("direct") || title.toLowerCase().includes("link")) && value)
-      direct = value;
+    if (value && (title.includes("مباشر") || title.includes("direct") || title.includes("download")))
+      labeledDirect = value;
   });
-  return direct
-    || $('input[value^="https://"][value*="/p_"]').attr("value")?.trim()
-    || $('input[value^="https://"][value*="/a_"]').attr("value")?.trim()
-    || $('a[href*="/p_"]').attr("href")?.trim()
-    || $('a[href*="/a_"]').attr("href")?.trim()
+  if (labeledDirect) return labeledDirect;
+
+  // ── Prioritas 4: Halaman share /p_ atau /a_ (akan di-resolve oleh resolveDirectUrl)
+  return $('input[value*="top4top.io/p_"]').attr("value")?.trim()
+    || $('input[value*="top4top.io/a_"]').attr("value")?.trim()
+    || $('a[href*="top4top.io/p_"]').attr("href")?.trim()
+    || $('a[href*="top4top.io/a_"]').attr("href")?.trim()
     || null;
+}
+
+/**
+ * Jika URL yang didapat masih halaman share (.html), fetch halaman itu
+ * dan cari link direct download audio di dalamnya.
+ */
+async function resolveDirectUrl(shareUrl, client) {
+  // Sudah link CDN / audio — tidak perlu resolve
+  if (/^https?:\/\/[a-z]\.top4top\.io\//i.test(shareUrl)) return shareUrl;
+  if (/\.(mp3|m4a|ogg|webm|aac|flac|wav)(\?.*)?$/i.test(shareUrl)) return shareUrl;
+
+  // Fetch halaman share
+  try {
+    const res = await client.get(shareUrl, {
+      headers: { accept: "text/html,*/*", referer: TOP4TOP + "/" }
+    });
+    const $ = cheerio.load(res.data || "");
+
+    // Cari link audio di halaman share
+    const cdnLink =
+      $('a[href]').toArray().map(el => $(el).attr("href")?.trim())
+        .find(h => h && /^https?:\/\/[a-z]\.top4top\.io\//i.test(h))
+      || $('source[src]').toArray().map(el => $(el).attr("src")?.trim())
+        .find(s => s && /top4top\.io/i.test(s))
+      || $('[data-url]').toArray().map(el => $(el).attr("data-url")?.trim())
+        .find(u => u && /top4top\.io/i.test(u));
+
+    if (cdnLink) return cdnLink;
+
+    // Cari di semua input / anchor dengan ekstensi audio
+    const audioExt = /\.(mp3|m4a|ogg|webm|aac|flac|wav)(\?.*)?$/i;
+    const audioLink =
+      $('a[href]').toArray().map(el => $(el).attr("href")?.trim()).find(h => h && audioExt.test(h))
+      || $('input[value]').toArray().map(el => $(el).attr("value")?.trim()).find(v => v && audioExt.test(v));
+
+    if (audioLink) return audioLink;
+  } catch (e) {
+    console.warn("⚠️ resolveDirectUrl gagal:", e.message);
+  }
+
+  // Kembalikan URL asli kalau tidak ketemu
+  return shareUrl;
 }
 
 async function getSid(client, jar) {
@@ -395,7 +465,21 @@ async function uploadToTop4top(filePath, mimeType = "audio/mpeg") {
       "sec-fetch-user": "?1", "sec-fetch-dest": "document"
     }
   });
-  return parseResultUrl(res.data || "");
+
+  // Debug: log semua input values dan anchor hrefs dari halaman hasil upload
+  const $dbg = cheerio.load(res.data || "");
+  const allInputs = $dbg('input[value]').toArray().map(el => $dbg(el).attr("value")?.trim()).filter(Boolean);
+  const allAnchors = $dbg('a[href]').toArray().map(el => $dbg(el).attr("href")?.trim()).filter(v => v && v.includes("top4top"));
+  console.log("📄 Input values di halaman hasil:", allInputs.slice(0, 10));
+  console.log("🔗 Anchor hrefs top4top:", allAnchors.slice(0, 10));
+
+  const rawUrl = parseResultUrl(res.data || "");
+  if (!rawUrl) return null;
+
+  console.log(`🔍 URL mentah dari parse: ${rawUrl}`);
+  const directUrl = await resolveDirectUrl(rawUrl, client);
+  console.log(`✅ URL direct final: ${directUrl}`);
+  return directUrl;
 }
 
 // ─── YouTube Audio Download ───────────────────────────────────────────────────
@@ -501,3 +585,4 @@ app.listen(PORT, async () => {
   console.log(`   Buka di browser: http://localhost:${PORT}\n`);
   try { await installYtdlp(); } catch (e) { console.warn("⚠️ Auto-install yt-dlp gagal:", e.message); }
 });
+
